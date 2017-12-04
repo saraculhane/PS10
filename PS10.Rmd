@@ -1,15 +1,18 @@
 ---
-title: "STAT/MATH 495: Problem Set 10"
-author: "WRITE YOUR NAME(S) HERE"
-date: "2017-11-28"
+title: 'STAT/MATH 495: Problem Set 10'
+author: "Sara Culhane"
+date: '2017-11-28'
 output:
   html_document:
-    toc: true
-    toc_float: true
-    toc_depth: 2
-    collapsed: false
-    smooth_scroll: false
+    collapsed: no
     df_print: kable
+    smooth_scroll: no
+    toc: yes
+    toc_depth: 2
+    toc_float: yes
+  pdf_document:
+    toc: yes
+    toc_depth: '2'
 ---
 
 ```{r setup, include=FALSE}
@@ -20,7 +23,7 @@ knitr::opts_chunk$set(echo = TRUE, fig.width=8, fig.height=4.5, message=FALSE, w
 
 # Collaboration
 
-Please indicate who you collaborated with on this assignment: 
+Please indicate who you collaborated with on this assignment: N/A
 
 
 
@@ -57,11 +60,88 @@ predictor_matrix_test <- model.matrix(model_formula, data = test)[, -1]
 # Do work and create submission files:
 
 ```{r}
+get_LASSO_coefficients <- function(LASSO_fit){
+  coeff_values <- LASSO_fit %>% 
+    broom::tidy() %>% 
+    as_tibble() %>% 
+    select(-c(step, dev.ratio)) %>% 
+    tidyr::complete(lambda, nesting(term), fill = list(estimate = 0)) %>% 
+    arrange(desc(lambda)) %>% 
+    select(term, estimate, lambda)
+  return(coeff_values)
+}
+
+
+lambda_inputs <- 10^seq(-2, 10, length = 100)
+
+
+LASSO_fit <- glmnet(x=predictor_matrix_train, y=train$log_price_doc, alpha = 1, lambda = lambda_inputs)
+
+# 5. Get beta-hat coefficients for ALL values of knob/tuning parameter lambda
+LASSO_coefficients <- get_LASSO_coefficients(LASSO_fit)
+lambda_starf <- LASSO_fit$lambda.min
+lambda_star_1SEf <- LASSO_fit$lambda.1se
 
 ```
 
+```{r}
+plot_LASSO_coefficients <- LASSO_coefficients %>% 
+  filter(term != "(Intercept)") %>% 
+  ggplot(aes(x=lambda, y=estimate, col=term)) +
+  geom_line() +
+  scale_x_log10() +
+  labs(x="lambda (log10-scale)", y="beta-hat coefficient estimate",
+       title="LASSO regularized coefficient for each lambda value")
+plot_LASSO_coefficients
+```
 
 
+## CV
+```{r}
+LASSO_CV <- cv.glmnet(x=predictor_matrix_train, y=train$log_price_doc, alpha=1, lambda=lambda_inputs)
+
+# Optimal lambdas
+lambda_star <- LASSO_CV$lambda.min
+lambda_star_1SE <- LASSO_CV$lambda.1se
+
+plot(LASSO_CV)
+abline(v=log(lambda_star), col="red")
+abline(v=log(lambda_star_1SE), col="blue")
+
+plot_LASSO_coefficients <- plot_LASSO_coefficients +
+  geom_vline(xintercept = lambda_star, col="red", alpha=0.4, linetype="dashed") +
+  geom_vline(xintercept = lambda_star_1SE, col="blue", alpha=0.4, linetype="dashed")
+
+plot_LASSO_coefficients
+
+plot_LASSO_coefficients +
+  coord_cartesian(xlim=c(1, 1000), ylim=c(-1, 1))
+```
+
+```{r}
+y_hat <- predict(LASSO_fit, newx=predictor_matrix_test, s=lambda_star_1SE) %>% 
+  as.vector()
+hist(y_hat)
+
+test$y_hat <- y_hat
+
+sub <- test %>%  mutate(price_doc = exp(y_hat)) %>% 
+  select(id, price_doc)
+write_csv(sub,"submission.csv")
+
+mod <- lm(log_price_doc ~ additional_education_km,data=train)
+y_hat2 <- predict(mod, test)
+
+sub2 <- test %>% mutate(price_doc = exp(y_hat2)) %>% 
+  select(id, price_doc)
+write_csv(sub2,"submission2.csv")
+
+RMSE <- function(x) {
+  sqrt(mean(x^2))
+}
+y1 <- RMSE(y_hat)
+y2 <- RMSE(y_hat2)
+```
 
 
 # Scoreboard
@@ -72,5 +152,5 @@ in these cells:
 
 Method                | Training Score  | Kaggle Score
 --------------------- | -------------   | -------------
-lm                    |                 |  
-LASSO crossvalidated  |                 |  
+lm                    |`r y1`           |  0.42577
+LASSO crossvalidated  | `r y2`          |  0.42577
